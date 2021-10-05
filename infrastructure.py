@@ -1,4 +1,6 @@
+from typing import Protocol, Type
 import troposphere.elasticloadbalancingv2 as elb
+import troposphere.ec2 as ec2
 
 
 from troposphere import (
@@ -42,6 +44,13 @@ from troposphere.ec2 import (
 from troposphere.policies import CreationPolicy, ResourceSignal
 
 t = Template()
+
+# Mapping
+t.add_mapping('RegionMap',{
+    "us-east-1":    {"32":  "ami-087c17d1fe0178315"},
+    "ap-south-1":    {"32":  "ami-0a23ccb2cdd9286bb"},
+})
+
 
 # Create a single VPC
 vpc = t.add_resource(
@@ -89,6 +98,7 @@ private_subnet_0 = t.add_resource(
         "PrivateSubnet0",
         VpcId=Ref(vpc),
         CidrBlock="10.0.50.0/24",
+        MapPublicIpOnLaunch=False,
         AvailabilityZone=Join("", [Ref("AWS::Region"), "a"]),
         Tags=Tags(
             Name="My-private-subnet-0"
@@ -96,18 +106,67 @@ private_subnet_0 = t.add_resource(
     )
 )
 
-# Create a private subnet 2
+# Create a private subnet 1
 private_subnet_1 = t.add_resource(
     Subnet(
         "PrivateSubnet1",
         VpcId=Ref(vpc),
         CidrBlock="10.0.60.0/24",
+        MapPublicIpOnLaunch=False,
         AvailabilityZone=Join("", [Ref("AWS::Region"), "b"]),
         Tags=Tags(
-            Name="My-private-subnet-0"
+            Name="My-private-subnet-1"
         )
     )
 )
+
+# Create security group for public subnet
+public_subnet_sg = t.add_resource(
+    ec2.SecurityGroup(
+        "PublicSecurityGroup",
+        GroupDescription="Enable HTTP and SSH for inbound access to public Subnet",
+        VpcId=Ref(vpc),
+        SecurityGroupIngress=[
+            ec2.SecurityGroupRule(
+                IpProtocol="tcp",
+                FromPort="22",
+                ToPort="22",
+                CidrIp="0.0.0.0/0",
+            ),
+            ec2.SecurityGroupRule(
+                IpProtocol="tcp",
+                FromPort="80",
+                ToPort="80",
+                CidrIp="0.0.0.0/0",
+            ),
+        ],
+    )
+)
+
+# Create security group for private subnet
+private_subnet_sg = t.add_resource(
+    ec2.SecurityGroup(
+        "PrivateSecurityGroup",
+        GroupDescription="Enable HTTP and SSH for inbound access to private Subnet",
+        VpcId=Ref(vpc),
+        SecurityGroupIngress=[
+            ec2.SecurityGroupRule(
+                IpProtocol="tcp",
+                FromPort="22",
+                ToPort="22",
+                SourceSecurityGroupId=GetAtt(public_subnet_sg, "GroupId"),
+            ),
+            ec2.SecurityGroupRule(
+                IpProtocol="tcp",
+                FromPort="80",
+                ToPort="80",
+                SourceSecurityGroupId=GetAtt(public_subnet_sg, "GroupId"),
+            ),
+        ],
+    )
+)
+
+
 # Create internet gateway
 internet_gateway = t.add_resource(
     InternetGateway(
@@ -140,6 +199,62 @@ alb = t.add_resource(
     )
 )
 
+# Create EC2 instance
+ec2_instance = t.add_resource(
+    ec2.Instance(
+        "EC2Instance",
+        ImageId= FindInMap("RegionMap", Ref("AWS::Region"), "32"),
+        SecurityGroupIds=[GetAtt(private_subnet_sg, "GroupId")],
+        SubnetId=Ref(private_subnet_0),
+        KeyName="simpl-key",
+        InstanceType="t2.micro",
+        UserData=Base64(
+        Join("\n",["#!/bin/bash",
+          "yum update -y ",
+          "yum install nginx -y",
+          "service nginx start",
+          "echo \"<html><h1>Simpl Assignment WebPage</h1></html>\"> /var/www/html/index.html"]
+          )
+        )
+    )
+)
 
+
+
+# Create Target Groups
+target_group = t.add_resource(
+    elb.TargetGroup(
+        "TargetGroup",
+        HealthCheckIntervalSeconds="30",
+        HealthCheckProtocol="HTTP",
+        HealthCheckTimeoutSeconds="10",
+        HealthyThresholdCount="4",
+        Matcher=elb.Matcher(
+            HttpCode="200"),
+        Name="MyTargetSopara1337",
+        Port="8080",
+        Protocol="HTTP",
+        Targets=[elb.TargetDescription(
+            Id=Ref(ec2_instance),
+            Port="80")],
+        UnhealthyThresholdCount="3",
+        VpcId=Ref(vpc)
+    )
+)
+
+
+# Create ALB listener 
+alb_listener = t.add_resource(
+    elb.Listener(
+        "Listener",
+        Port="80",
+        Protocol="HTTP",
+        LoadBalancerArn=Ref(alb),
+        DefaultActions=[elb.Action(
+            Type="forward",
+            TargetGroupArn=Ref(target_group)
+        )]
+    )
+)
 
 print(t.to_yaml())
