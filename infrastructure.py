@@ -1,4 +1,8 @@
-from typing import Protocol, Type
+from typing import (
+  Protocol,
+  Type
+)
+
 import troposphere.elasticloadbalancingv2 as elb
 import troposphere.ec2 as ec2
 
@@ -163,12 +167,8 @@ public_subnet_sg = t.add_resource(
     ec2.SecurityGroup(
         "PublicSecurityGroup",
         GroupDescription="Enable HTTP and SSH for inbound access to public Subnet",
-        VpcId=Ref(vpc)
-    )
-)
 
-
-# Create security group for private subnet
+      # Create security group for private subnet
 private_subnet_sg = t.add_resource(
     ec2.SecurityGroup(
         "PrivateSecurityGroup",

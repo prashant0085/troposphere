@@ -1,0 +1,212 @@
+Mappings:
+  RegionMap:
+    ap-south-1:
+      '32': ami-0a23ccb2cdd9286bb
+    us-east-1:
+      '32': ami-087c17d1fe0178315
+Resources:
+  ALB:
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref 'PublicSubnet0'
+        - !Ref 'PublicSubnet1'
+      Tags:
+        - Key: Name
+          Value: My-ALB
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  DefaultPrivateRoute:
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref 'NatGateway'
+      RouteTableId: !Ref 'PrivateRouteTable'
+    Type: AWS::EC2::Route
+  DefaultPublicRoute:
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+      RouteTableId: !Ref 'PublicRouteTable'
+    Type: AWS::EC2::Route
+  EC2Instance:
+    Properties:
+      ImageId: !FindInMap
+        - RegionMap
+        - !Ref 'AWS::Region'
+        - '32'
+      InstanceType: t2.micro
+      KeyName: simpl-key
+      SecurityGroupIds:
+        - !GetAtt 'PrivateSecurityGroup.GroupId'
+      SubnetId: !Ref 'PrivateSubnet0'
+      UserData: !Base64
+        Fn::Join:
+          - "\n"
+          - - '#!/bin/bash'
+            - 'yum update -y '
+            - yum install nginx -y
+            - service nginx start
+            - echo "<html><h1>Simpl Assignment WebPage</h1></html>"> /var/www/html/index.html
+    Type: AWS::EC2::Instance
+  InternetGateway:
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-internet-gateway
+    Type: AWS::EC2::InternetGateway
+  Listener:
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref 'TargetGroup'
+          Type: forward
+      LoadBalancerArn: !Ref 'ALB'
+      Port: '80'
+      Protocol: HTTP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  NatGateway:
+    Properties:
+      AllocationId: !GetAtt 'NatGatewayEIP.AllocationId'
+      SubnetId: !Ref 'PublicSubnet0'
+    Type: AWS::EC2::NatGateway
+  NatGatewayEIP:
+    Properties:
+      Domain: vpc
+    Type: AWS::EC2::EIP
+  PrivateRouteTable:
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Private-Route-Table
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::RouteTable
+  PrivateSecurityGroup:
+    Properties:
+      GroupDescription: Enable HTTP and SSH for inbound access to private Subnet
+      SecurityGroupIngress:
+        - FromPort: '22'
+          IpProtocol: tcp
+          SourceSecurityGroupId: !GetAtt 'PublicSecurityGroup.GroupId'
+          ToPort: '22'
+        - FromPort: '80'
+          IpProtocol: tcp
+          SourceSecurityGroupId: !GetAtt 'PublicSecurityGroup.GroupId'
+          ToPort: '80'
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::SecurityGroup
+  PrivateSubnet0:
+    Properties:
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref 'AWS::Region'
+          - a
+      CidrBlock: 10.0.50.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: My-private-subnet-0
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::Subnet
+  PrivateSubnet1:
+    Properties:
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref 'AWS::Region'
+          - b
+      CidrBlock: 10.0.60.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: My-private-subnet-1
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::Subnet
+  PrivateSubnetRouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref 'PrivateRouteTable'
+      SubnetId: !Ref 'PrivateSubnet0'
+    Type: AWS::EC2::SubnetRouteTableAssociation
+  PublicRouteTable:
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Public-Route-Table
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::RouteTable
+  PublicSecurityGroup:
+    Properties:
+      GroupDescription: Enable HTTP and SSH for inbound access to public Subnet
+      SecurityGroupIngress:
+        - CidrIp: '0.0.0.0/0'
+          FromPort: '22'
+          IpProtocol: tcp
+          ToPort: '22'
+        - CidrIp: '0.0.0.0/0'
+          FromPort: '80'
+          IpProtocol: tcp
+          ToPort: '80'
+        - CidrIp: '0.0.0.0/0'
+          FromPort: '8080'
+          IpProtocol: tcp
+          ToPort: '8080'
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::SecurityGroup
+  PublicSubnet0:
+    Properties:
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref 'AWS::Region'
+          - a
+      CidrBlock: 10.0.10.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: My-public-subnet-0
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::Subnet
+  PublicSubnet1:
+    Properties:
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref 'AWS::Region'
+          - b
+      CidrBlock: 10.0.20.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: My-public-subnet-1
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::Subnet
+  PublicSubnetRouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      SubnetId: !Ref 'PublicSubnet0'
+    Type: AWS::EC2::SubnetRouteTableAssociation
+  TargetGroup:
+    Properties:
+      HealthCheckIntervalSeconds: '300'
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: '10'
+      HealthyThresholdCount: '4'
+      Matcher:
+        HttpCode: '200'
+      Name: MyTargetSopara1337
+      Port: '80'
+      Protocol: HTTP
+      Targets:
+        - Id: !Ref 'EC2Instance'
+          Port: '80'
+      UnhealthyThresholdCount: '3'
+      VpcId: !Ref 'VPC'
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  VPC:
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: My-VPC
+    Type: AWS::EC2::VPC
+  VPCGatewayAttachment:
+    Properties:
+      InternetGatewayId: !Ref 'InternetGateway'
+      VpcId: !Ref 'VPC'
+    Type: AWS::EC2::VPCGatewayAttachment
+
