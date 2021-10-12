@@ -1,7 +1,10 @@
-from typing import Protocol, Type
+from typing import (
+  Protocol,
+  Type
+)
+
 import troposphere.elasticloadbalancingv2 as elb
 import troposphere.ec2 as ec2
-
 
 from troposphere import (
     Base64,
@@ -37,6 +40,8 @@ from troposphere.ec2 import (
     RouteTable,
     SecurityGroup,
     SecurityGroupRule,
+    SecurityGroupIngress,
+    SecurityGroupEgress,
     Subnet,
     SubnetNetworkAclAssociation,
     SubnetRouteTableAssociation,
@@ -162,52 +167,89 @@ public_subnet_sg = t.add_resource(
     ec2.SecurityGroup(
         "PublicSecurityGroup",
         GroupDescription="Enable HTTP and SSH for inbound access to public Subnet",
-        VpcId=Ref(vpc),
-        SecurityGroupIngress=[
-            ec2.SecurityGroupRule(
-                IpProtocol="tcp",
-                FromPort="22",
-                ToPort="22",
-                CidrIp="0.0.0.0/0",
-            ),
-            ec2.SecurityGroupRule(
-                IpProtocol="tcp",
-                FromPort="80",
-                ToPort="80",
-                CidrIp="0.0.0.0/0",
-            ),
-            ec2.SecurityGroupRule(
-                IpProtocol="tcp",
-                FromPort="8080",
-                ToPort="8080",
-                CidrIp="0.0.0.0/0",
-            ),
-        ],
-    )
-)
 
-# Create security group for private subnet
+      # Create security group for private subnet
 private_subnet_sg = t.add_resource(
     ec2.SecurityGroup(
         "PrivateSecurityGroup",
         GroupDescription="Enable HTTP and SSH for inbound access to private Subnet",
-        VpcId=Ref(vpc),
-        SecurityGroupIngress=[
-            ec2.SecurityGroupRule(
-                IpProtocol="tcp",
-                FromPort="22",
-                ToPort="22",
-                SourceSecurityGroupId=GetAtt(public_subnet_sg, "GroupId"),
-            ),
-            ec2.SecurityGroupRule(
-                IpProtocol="tcp",
-                FromPort="80",
-                ToPort="80",
-                SourceSecurityGroupId=GetAtt(public_subnet_sg, "GroupId"),
-            ),
-        ],
+        VpcId=Ref(vpc)
     )
 )
+
+
+# Adding Ingress rule for private subnet security group 
+t.add_resource(SecurityGroupIngress=[
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="22",
+        ToPort="22",
+        SourceSecurityGroupId=GetAtt(public_subnet_sg, "GroupId"),
+        ),
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="80",
+        ToPort="80",
+        SourceSecurityGroupId=GetAtt(public_subnet_sg, "GroupId"),
+        ),
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="443",
+        ToPort="443",
+        SourceSecurityGroupId=GetAtt(public_subnet_sg, "GroupId"),
+        ),
+    ],
+    GroupId=Ref(private_subnet_sg)
+)
+
+# Adding Ingress rule for public subnet security group
+t.add_resource(SecurityGroupEgress=[
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="22",
+        ToPort="22",
+        SourceSecurityGroupId=GetAtt(private_subnet_sg, "GroupId"),
+        ),
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="80",
+        ToPort="80",
+        SourceSecurityGroupId=GetAtt(private_subnet_sg, "GroupId"),
+        ),
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="443",
+        ToPort="443",
+        SourceSecurityGroupId=GetAtt(private_subnet_sg, "GroupId"),
+        ),
+    ],
+    GroupId=Ref(public_subnet_sg)
+)
+
+# Adding Ingress rule for public subnet security group
+t.add_resource(SecurityGrouIngress=[
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="22",
+        ToPort="22",
+        CidrIp="0.0.0.0/0",
+            ),
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="80",
+        ToPort="80",
+        CidrIp="0.0.0.0/0",
+            ),
+    SecurityGroupRule(
+        IpProtocol="tcp",
+        FromPort="443",
+        ToPort="443",
+        CidrIp="0.0.0.0/0",
+        ),
+    ],
+    GroupId=Ref(public_subnet_sg)
+)
+
 
 # Create Public Route Table
 public_route_table = t.add_resource(RouteTable(
@@ -265,6 +307,7 @@ alb = t.add_resource(
         "ALB",
         Scheme="internet-facing",
         Subnets=[Ref(public_subnet_0), Ref(public_subnet_1)],
+        SecurityGroupIds=[GetAtt(public_subnet_sg, "GroupId")],
         Tags=Tags(
             Name="My-ALB"
         )
@@ -283,10 +326,10 @@ ec2_instance = t.add_resource(
         InstanceType="t2.micro",
         UserData=Base64(
         Join("\n",["#!/bin/bash",
-          "yum update -y ",
-          "yum install nginx -y",
-          "service nginx start",
-          "echo \"<html><h1>Simpl Assignment WebPage</h1></html>\"> /var/www/html/index.html"]
+          "sudo yum update -y ",
+          "sudo amazon-linux-extras install nginx1",
+          "sudo systemctl start nginx",
+          "sudo systectl enable nginx"]
           )
         )
     )
@@ -299,7 +342,7 @@ target_group = t.add_resource(
         "TargetGroup",
         HealthCheckIntervalSeconds="300",
         HealthCheckProtocol="HTTP",
-        HealthCheckTimeoutSeconds="10",
+        HealthCheckTimeoutSeconds="120",
         HealthyThresholdCount="4",
         Matcher=elb.Matcher(
             HttpCode="200"),
